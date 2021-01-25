@@ -1,8 +1,9 @@
-use clap::{App, Arg};
+use clap::{App, Arg, ArgGroup};
 
 pub fn new<'a>() -> App<'a, 'a> {
     let result = App::new("pg-to-sqlite3")
         .version("0.0.0")
+        .author("Steven Kalt")
         .about("Dump a postgres database into a sqlite db as best possible")
         .arg(
             Arg::with_name("SRC")
@@ -24,9 +25,32 @@ pub fn new<'a>() -> App<'a, 'a> {
                 .takes_value(true)
                 .required(true)
                 .help("a path to a sqlite3 file"),
-        );
-    // TODO: --progress
-    // TODO: --data-only | --schema-only
+        )
+        .arg(
+            Arg::with_name("overwrite")
+                .long("overwrite")
+                .takes_value(false)
+                .help("whether to overwrite DEST if it exists"),
+        )
+        .arg(
+            Arg::with_name("progress")
+                .long("progress")
+                .takes_value(false)
+                .help("whether to display a progress bar for data dumps"),
+        )
+        .arg(
+            Arg::with_name("data_only")
+                .long("data-only")
+                .takes_value(false)
+                .help("whether to only produce inserts"),
+        )
+        .arg(
+            Arg::with_name("schema_only")
+                .long("schema-only")
+                .takes_value(false)
+                .help("don't produce any inserts"),
+        )
+        .group(ArgGroup::with_name("output_type").args(&["data_only", "schema_only"]));
     // TODO: respoect PGHOST PGOPTIONS PGPORT PGUSER and listen for password
     return result;
 }
