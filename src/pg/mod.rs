@@ -28,14 +28,16 @@ pub struct Table {
     oid: u32,
     name: String,
     columns: Vec<ColInfo>,
+    approx_n_rows: i64,
 }
 
 fn create_sqlite_table_stmt(t: Table) -> String {
     let cols: Vec<String> = t.columns.iter().map(|col| format!("{}", col)).collect();
     return format!(
-        "CREATE TABLE {} (\n  {}\n  );\n\n",
+        "CREATE TABLE {} (\n  {}\n  );\n -- ~ {} rows\n\n",
         &t.name,
-        cols.join("\n  , ")
+        cols.join("\n  , "),
+        &t.approx_n_rows
     );
 }
 
@@ -91,6 +93,7 @@ pub struct Rel {
     oid: u32,
     name: String,
     relkind: String,
+    approx_n_rows: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -125,14 +128,14 @@ impl SchemaInformation {
             let table = Table {
                 oid: rel.oid,
                 name: rel.name.to_owned(),
-                columns: vec![],
+                approx_n_rows: rel.approx_n_rows,
+                columns: vec![], // pupulated later
             };
             if tables.contains_key(&table.name) {
                 panic!("duplicate table {}", table.name)
             }
             tables.insert(table.name.to_owned(), table);
         }
-
         fn add_view(rel: Rel, views: &mut HashMap<String, View>, tables: &HashMap<String, Table>) {
             let view = View {
                 oid: rel.oid,
@@ -147,6 +150,7 @@ impl SchemaInformation {
             }
             views.insert(view.name.to_owned(), view);
         }
+
         for rel in rels {
             match rel.relkind.as_str() {
                 "table" => add_table(rel, &mut tables),

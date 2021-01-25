@@ -1,7 +1,7 @@
 use super::{ColInfo, FkeyConstraint, Rel, Table, View, ViewRelUsage};
 use crate::pg::object_types::{get_pg_type_from_name, pretty_relkind};
 use crate::pg::query;
-use std::collections::HashMap;
+use std::{collections::HashMap, println};
 
 pub fn get_table_defns(
     conn: &mut postgres::Client,
@@ -95,10 +95,11 @@ pub fn list_relations_in_schema(conn: &mut postgres::Client, schema_name: &str) 
     return query::must_succeed(conn.query(
         "
         SELECT
-            c.oid,
-            c.relname AS name,
-            c.relkind::TEXT,
-            pg_catalog.pg_get_userbyid(c.relowner) as owner
+            c.oid
+            , c.relname AS name
+            , c.relkind::TEXT
+            , c.reltuples::BIGINT AS approx_n_rows
+            , pg_catalog.pg_get_userbyid(c.relowner) as owner
         FROM pg_catalog.pg_class c
             LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
         WHERE c.relkind IN ('r','v','m','s','p')
@@ -112,14 +113,23 @@ pub fn list_relations_in_schema(conn: &mut postgres::Client, schema_name: &str) 
     .map(|row| {
         let oid = row.get("oid");
         let name = row.get("name");
+        let approx_n_rows = row.get("approx_n_rows");
         let relkind = pretty_relkind(row.get("relkind")).to_owned();
-        return Rel { oid, name, relkind };
+        return Rel {
+            oid,
+            name,
+            relkind,
+            approx_n_rows,
+        };
     })
     .collect();
 }
 
 // TODO: parametrize with a Vec<str> schema names
-pub fn list_all_fkey_constraints(conn: &mut postgres::Client, schema: &str) -> Vec<postgres::Row> {
+pub(crate) fn get_all_fkey_constraints(
+    conn: &mut postgres::Client,
+    schema: &str,
+) -> Vec<FkeyConstraint> {
     return query::must_succeed(conn.query(
         "
         SELECT
@@ -138,31 +148,24 @@ pub fn list_all_fkey_constraints(conn: &mut postgres::Client, schema: &str) -> V
             AND table_contraints.constraint_schema = $1
         ",
         &[&schema],
-    ));
-}
-
-pub(crate) fn get_all_fkey_constraints(
-    conn: &mut postgres::Client,
-    schema: &str,
-) -> Vec<FkeyConstraint> {
-    return list_all_fkey_constraints(conn, schema)
-        .iter()
-        .map(|row| {
-            let table = row.get("table_name");
-            // let table = get_name("table_name")(row);
-            let col = row.get("column_name");
-            let constraint = row.get("constraint_name");
-            let foreign_table = row.get("foreign_table_name");
-            let foreign_column = row.get("foreign_column_name");
-            return FkeyConstraint {
-                table,
-                column: col,
-                name: constraint,
-                foreign_table,
-                foreign_column,
-            };
-        })
-        .collect();
+    ))
+    .iter()
+    .map(|row| {
+        let table = row.get("table_name");
+        // let table = get_name("table_name")(row);
+        let col = row.get("column_name");
+        let constraint = row.get("constraint_name");
+        let foreign_table = row.get("foreign_table_name");
+        let foreign_column = row.get("foreign_column_name");
+        return FkeyConstraint {
+            table,
+            column: col,
+            name: constraint,
+            foreign_table,
+            foreign_column,
+        };
+    })
+    .collect();
 }
 
 pub(crate) fn get_view_refs(conn: &mut postgres::Client, schema: &str) -> Vec<ViewRelUsage> {
@@ -234,11 +237,12 @@ fn list_view_dependencies(conn: &mut postgres::Client, schema: &str) -> Vec<View
     .collect();
 }
 
-/// may fail if more than 4.5 billion rows
-pub fn count_rows_in_table(conn: &mut postgres::Client, schema: &str, table: &str) -> u32 {
-    let n = query::must_succeed(conn.query("SELECT count(*) AS n FROM {}.{}", &[&schema, &table]))
-        .first()
-        .unwrap()
-        .get("n");
-    return n;
-}
+// may fail if more than 4.5 billion rows
+// pub fn count_rows_in_table(conn: &mut postgres::Client, schema: &str, table: &str) -> u32 {
+//     let query = "SELECT count(*) AS n FROM " + schema; // &format!("SELECT count(*) AS n FROM {}.{}", schema, table);
+//     let n = query::must_succeed(conn.query(query, &[]))
+//         .first()
+//         .unwrap()
+//         .get("n");
+//     return n;
+// }
