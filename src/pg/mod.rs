@@ -5,9 +5,9 @@
 
 use petgraph::graph::Graph;
 use petgraph::{self, algo::toposort};
-use postgres;
+use postgres::{self, RowIter};
 use postgres_types::Type as PgType;
-use std::{collections::HashMap, fmt, u32, vec::Vec};
+use std::{collections::HashMap, fmt, intrinsics::transmute, u32, vec::Vec};
 mod introspection;
 mod object_types;
 mod query;
@@ -34,7 +34,7 @@ pub struct Table {
 fn create_sqlite_table_stmt(t: Table) -> String {
     let cols: Vec<String> = t.columns.iter().map(|col| format!("{}", col)).collect();
     return format!(
-        "CREATE TABLE {} (\n  {}\n  );\n -- ~ {} rows\n\n",
+        "CREATE TABLE {} (\n  {}\n  );\n  -- ~ {} rows\n",
         &t.name,
         cols.join("\n  , "),
         &t.approx_n_rows
@@ -280,11 +280,40 @@ impl fmt::Display for ColInfo {
             .unwrap()
             .to_string()
             .to_ascii_uppercase();
-        write!(f, "{} {} --", self.name, sqlite_col)?;
+        write!(
+            f,
+            "{} {} -- {}",
+            self.name,
+            sqlite_col,
+            self.data_type.to_string().to_ascii_uppercase()
+        )?;
         if self.nullable == false {
             write!(f, " NOT NULL")?;
         }
-        write!(f, " -- {}", self.data_type)?;
         return Ok(());
     }
+}
+
+pub fn dump_table<'a, 'b>(
+    conn: &'a mut postgres::Client,
+    table: &'b str,
+) -> Result<postgres::RowIter<'a>, postgres::Error> {
+    let query = format!("select * from {}", table);
+    let statement: postgres::Statement = conn.prepare(&query)?;
+    let params: Vec<&str> = vec![];
+    return conn.query_raw(&statement, params.iter());
+}
+
+use rusqlite::{params, Connection, Error as SqliteErr, Result as SqliteResult};
+
+pub fn create_all_tables(conn: &mut Connection, create_table_stmt: &str) -> Result<(), SqliteErr> {
+    let txn = conn.transaction()?;
+    txn.execute_batch(create_table_stmt)?;
+    let result = txn.commit();
+    return result;
+}
+
+pub fn do_the_thing(dest: &str, tables: &str) -> Result<(), SqliteErr> {
+    let mut conn = Connection::open(dest)?;
+    return create_all_tables(&mut conn, tables);
 }

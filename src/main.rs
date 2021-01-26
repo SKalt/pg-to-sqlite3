@@ -1,6 +1,9 @@
 mod cli;
 mod pg;
-
+use cli::new;
+use fallible_iterator::FallibleIterator;
+use rusqlite::Connection;
+use std::iter;
 fn main() {
     // use petgraph::dot::Dot;
     let args = cli::new().get_matches();
@@ -11,6 +14,11 @@ fn main() {
     let mut conn = pg::connect(src);
     let sch = pg::SchemaInformation::new(&mut conn, "public");
     println!("{}", sch.dump_tables());
+    pg::do_the_thing(dest, &sch.dump_tables()).unwrap();
+    // let mut rows = pg::dump_table(&mut conn, "_file").unwrap();
+    // while let Some(row) = rows.next().unwrap() {
+    //     println!("{:?}", row);
+    // }
     // for (name, v) in &sch.views {
     //     println!("{}: {}", name, v.defn)
     // }
