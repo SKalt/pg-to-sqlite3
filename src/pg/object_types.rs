@@ -1,5 +1,14 @@
-use postgres_types::Type as PgType;
-use rusqlite::types::Type as SqliteType;
+use std::usize;
+
+use bit_vec::{self};
+use chrono;
+use postgres::{Column as PgColumn, Row as PgRow};
+use postgres_types::{FromSql as FromPgSql, Type as PgType};
+use rusqlite::{
+    types::{Null as SqliteNull, Type as SqliteType},
+    Error as SqliteError, ToSql as ToSqlite,
+};
+use serde_json;
 
 pub fn pretty_relkind(relkind: &str) -> &str {
     match relkind {
@@ -205,9 +214,12 @@ pub fn sqlite_type_from_pg_type(pg_type: &PgType) -> Result<SqliteType, String> 
     match pg_type {
         &PgType::INT8 | &PgType::INT4 | &PgType::INT2 | &PgType::BOOL => Ok(SqliteType::Integer),
 
-        &PgType::CHAR | &PgType::TEXT | &PgType::NAME | &PgType::VARCHAR | &PgType::BPCHAR => {
-            Ok(SqliteType::Text)
-        }
+        &PgType::CHAR
+        | &PgType::TEXT
+        | &PgType::NAME
+        | &PgType::VARCHAR
+        | &PgType::BPCHAR
+        | &PgType::UNKNOWN => Ok(SqliteType::Text),
 
         &PgType::JSON
         | &PgType::XML
@@ -231,4 +243,50 @@ pub fn sqlite_type_from_pg_type(pg_type: &PgType) -> Result<SqliteType, String> 
             unknown
         )),
     }
+}
+
+fn translate<'a, T>(row: &'a PgRow, index: usize) -> Box<dyn ToSqlite>
+where
+    T: ToSqlite,
+    T: 'static, // TODO: explain why these bounds are needed, and what they are
+    T: FromPgSql<'a>,
+{
+    return Box::new(row.get::<usize, T>(index));
+}
+
+fn translate_col<'a>(row: &'a PgRow, index: usize, col: &'a PgColumn) -> Box<dyn ToSqlite> {
+    match col.type_() {
+        &PgType::CHAR => translate::<'a, i8>(row, index),
+        &PgType::INT2 => translate::<'a, i16>(row, index),
+        &PgType::INT4 => translate::<'a, i32>(row, index),
+        &PgType::INT8 => translate::<'a, i64>(row, index),
+        &PgType::FLOAT4 | &PgType::FLOAT8 => translate::<'a, f64>(row, index),
+        &PgType::BOOL => translate::<'a, bool>(row, index),
+        &PgType::BYTEA => translate::<'a, Vec<u8>>(row, index),
+        &PgType::TEXT | &PgType::NAME | &PgType::VARCHAR | &PgType::BPCHAR | &PgType::UNKNOWN => {
+            translate::<'a, String>(row, index)
+        }
+        &PgType::JSON | &PgType::JSONB => translate::<'a, serde_json::Value>(row, index),
+        &PgType::DATE => translate::<'a, chrono::NaiveDate>(row, index),
+        &PgType::TIME => translate::<'a, chrono::NaiveTime>(row, index),
+        // &PgType::TIMETZ ?
+        &PgType::TIMESTAMP => translate::<'a, chrono::NaiveDateTime>(row, index),
+        &PgType::TIMESTAMPTZ => translate::<'a, chrono::DateTime<chrono::Utc>>(row, index),
+        &PgType::UUID => translate::<'a, uuid::Uuid>(row, index),
+        &PgType::BIT | &PgType::VARBIT => {
+            let bits: bit_vec::BitVec = row.get(index);
+            let bytes: Vec<u8> = bits.to_bytes();
+            return Box::new(bytes);
+        }
+        _ => unimplemented!(),
+    }
+}
+
+pub fn translate_row(row: &PgRow) -> Vec<Box<dyn ToSqlite>> {
+    return row
+        .columns()
+        .iter()
+        .enumerate()
+        .map(|(idx, col)| translate_col(row, idx, col))
+        .collect();
 }

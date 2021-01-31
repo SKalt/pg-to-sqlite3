@@ -5,19 +5,27 @@
 
 use petgraph::graph::Graph;
 use petgraph::{self, algo::toposort};
-use postgres::{self, RowIter};
+use postgres::{self, RowIter, Transaction};
 use postgres_types::Type as PgType;
-use std::{collections::HashMap, fmt, intrinsics::transmute, u32, vec::Vec};
+use std::{
+    collections::{HashMap, VecDeque},
+    convert::TryInto,
+    fmt,
+    intrinsics::transmute,
+    u32,
+    vec::Vec,
+};
 mod introspection;
 mod object_types;
 mod query;
 mod validate;
+use fallible_iterator::FallibleIterator;
 
 use introspection::{
     get_all_fkey_constraints, get_table_defns, get_view_defns, get_view_refs,
     list_relations_in_schema,
 };
-use object_types::sqlite_type_from_pg_type;
+use object_types::{sqlite_type_from_pg_type, translate_row};
 pub use query::connect;
 
 // TODO: constraint enum::{check, fkey, unique, pkey}
@@ -77,16 +85,18 @@ pub struct SchemaInformation {
     // -- nodes --
     pub tables: HashMap<String, Table>,
     pub views: HashMap<String, View>,
+    pub table_order: Vec<String>,
     // check_constraints,
     // not_null_constraints,
     // -- edges --
     fkey_constraints: HashMap<String, FkeyConstraint>,
     view_rel_usage: Vec<ViewRelUsage>, // TODO: HashMap<String, ViewTableUsage>
-                                       // -- ??? ---
-                                       // extensions (specifically, for translating postGIS -> spatialite)
-                                       // relations, // the namespace tables+views inhabit ?
-                                       // sequences  // this one's going to be difficult to replicate, due to sqlite's `rowid` trick
-                                       // see https://www.sqlitetutorial.net/sqlite-autoincrement/
+    // -- ??? ---
+    // extensions (specifically, for translating postGIS -> spatialite)
+    // relations, // the namespace tables+views inhabit ?
+    // sequences  // this one's going to be difficult to replicate, due to sqlite's `rowid` trick
+    // see https://www.sqlitetutorial.net/sqlite-autoincrement/
+    dependency_graph: Graph<Node, Edge>,
 }
 
 pub struct Rel {
@@ -112,7 +122,11 @@ pub fn table_order(g: &Graph<Node, Edge>) -> Vec<String> {
     match sorted {
         Ok(mut r) => {
             r.reverse();
-            return r.iter().map(|idx| (&(g[*idx]).name).to_owned()).collect();
+            return r
+                .iter()
+                .filter(|idx| (&(g[**idx]).type_ == "t"))
+                .map(|idx| (&(g[*idx]).name).to_owned())
+                .collect();
         }
         Err(c) => panic!("{:?}", c),
     }
@@ -171,12 +185,19 @@ impl SchemaInformation {
         }
 
         let view_rel_usage = get_view_refs(conn, schema);
+        let dependency_graph =
+            to_dependency_graph(&tables, &views, &view_rel_usage, &fkey_constraints);
+        let table_order = table_order(&dependency_graph);
+        to_dependency_graph(&tables, &views, &view_rel_usage, &fkey_constraints);
+
         return SchemaInformation {
             name: schema.to_owned(),
             tables,
             views,
             fkey_constraints,
             view_rel_usage,
+            dependency_graph,
+            table_order, // this gets filled in later
         };
     }
     fn validate(&self) -> Result<(), String> {
@@ -203,57 +224,10 @@ impl SchemaInformation {
         //     assert all table, view names distinct
         //     assert all fkey constraints' tables & foreign tables are present
     }
-    pub fn to_dependency_graph(&self) -> Graph<Node, Edge> {
-        let mut names = HashMap::new();
-        let mut deps = Graph::new();
 
-        for (name, _) in &self.tables {
-            let n = deps.add_node(Node {
-                name: name.to_owned(),
-                type_: "t".to_owned(),
-            });
-            names.insert(name, n);
-        }
-        for (name, _) in &self.views {
-            let n = deps.add_node(Node {
-                name: name.to_owned(),
-                type_: "v".to_owned(),
-            });
-            names.insert(name, n);
-        }
-
-        // println!()
-        for usage in &self.view_rel_usage {
-            let table = names.get(&usage.rel_name).unwrap();
-            let view = names.get(&usage.view_name).unwrap();
-            deps.add_edge(
-                *table,
-                *view,
-                Edge {
-                    type_: "v->r".to_owned(),
-                },
-            );
-        }
-        for (_, fk) in &self.fkey_constraints {
-            let src = names.get(&fk.table).unwrap();
-            let dest = names.get(&fk.foreign_table).unwrap();
-            deps.add_edge(
-                *src,
-                *dest,
-                Edge {
-                    type_: "fk".to_owned(),
-                },
-            );
-        }
-        return deps;
-    }
-    pub fn table_order(&self) -> Vec<String> {
-        let g = &self.to_dependency_graph();
-        table_order(g)
-    }
-    pub fn dump_tables(&self) -> String {
+    pub fn create_table_statements(&self) -> String {
         let tables: Vec<String> = self
-            .table_order()
+            .table_order
             .iter()
             .filter(|t| self.tables.contains_key(*t))
             .map(|t| {
@@ -268,6 +242,55 @@ impl SchemaInformation {
     }
 }
 
+pub fn to_dependency_graph(
+    tables: &HashMap<String, Table>,
+    views: &HashMap<String, View>,
+    view_rel_usage: &Vec<ViewRelUsage>,
+    fkey_constraints: &HashMap<String, FkeyConstraint>,
+) -> Graph<Node, Edge> {
+    let mut names = HashMap::new();
+    let mut deps = Graph::new();
+
+    for (name, _) in tables {
+        let n = deps.add_node(Node {
+            name: name.to_owned(),
+            type_: "t".to_owned(),
+        });
+        names.insert(name, n);
+    }
+    for (name, _) in views {
+        let n = deps.add_node(Node {
+            name: name.to_owned(),
+            type_: "v".to_owned(),
+        });
+        names.insert(name, n);
+    }
+
+    // println!()
+    for usage in view_rel_usage {
+        let table = names.get(&usage.rel_name).unwrap();
+        let view = names.get(&usage.view_name).unwrap();
+        deps.add_edge(
+            *table,
+            *view,
+            Edge {
+                type_: "v->r".to_owned(),
+            },
+        );
+    }
+    for (_, fk) in fkey_constraints {
+        let src = names.get(&fk.table).unwrap();
+        let dest = names.get(&fk.foreign_table).unwrap();
+        deps.add_edge(
+            *src,
+            *dest,
+            Edge {
+                type_: "fk".to_owned(),
+            },
+        );
+    }
+    return deps;
+}
 #[derive(Debug, Clone)]
 pub struct ColInfo {
     name: String,
@@ -304,16 +327,46 @@ pub fn dump_table<'a, 'b>(
     return conn.query_raw(&statement, params.iter());
 }
 
-use rusqlite::{params, Connection, Error as SqliteErr, Result as SqliteResult};
+use postgres::Error as PgError;
+use rusqlite::{Connection, Error as SqliteErr, Transaction as SqliteTransaction};
 
-pub fn create_all_tables(conn: &mut Connection, create_table_stmt: &str) -> Result<(), SqliteErr> {
-    let txn = conn.transaction()?;
-    txn.execute_batch(create_table_stmt)?;
-    let result = txn.commit();
-    return result;
+#[derive(Debug)]
+pub enum SqlError {
+    SqliteErr(SqliteErr),
+    PgError(PgError),
 }
 
-pub fn do_the_thing(dest: &str, tables: &str) -> Result<(), SqliteErr> {
-    let mut conn = Connection::open(dest)?;
-    return create_all_tables(&mut conn, tables);
+impl From<SqliteErr> for SqlError {
+    fn from(e: SqliteErr) -> Self {
+        return SqlError::SqliteErr(e);
+    }
+}
+impl From<PgError> for SqlError {
+    fn from(e: PgError) -> Self {
+        return SqlError::PgError(e);
+    }
+}
+
+pub fn transfer_table_rows(
+    pg: &mut postgres::Client,
+    lite: &mut SqliteTransaction,
+    table: &Table,
+) -> Result<(), SqlError> {
+    let mut rows = dump_table(pg, &table.name)?;
+    let col_params: Vec<String> = table.columns.iter().map(|_| "?".to_owned()).collect();
+    let insert = format!(
+        "INSERT INTO {} VALUES ({})",
+        &table.name,
+        col_params.join(", ")
+    );
+    // pg and sqlite tables _MUST_ have the same name and column order
+    let statement = &mut lite.prepare(&*insert)?; // causes stack overflow?
+    let countdown: u64 = (table.approx_n_rows).try_into().unwrap(); // safe since we don't expect negative numbers of rows
+    let pb = indicatif::ProgressBar::new(countdown);
+
+    while let Some(row) = rows.next()? {
+        statement.execute(translate_row(&row))?;
+        pb.inc(1);
+    }
+    Ok(())
 }

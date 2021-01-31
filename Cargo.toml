@@ -7,14 +7,73 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-postgres = "0.19.0"
-postgres-types = "0.2.0"
 clap = "2.33.3"
-petgraph = "0.5.1"
 fallible-iterator = "0.2.0"
 indicatif = "0.15.0"
-[dependencies.rusqlite]
-version = "0.24.2"
-features = ["bundled"]
+petgraph = "0.5.1"
+
+# the following crates are enabled by postgres, postgres_types, and rusqlite feature flags: 
+bit-vec = "0.6"    # postgres(_types)?: with-bit-vec-0_6
+chrono = "0.4"     # postgres(_types)?: with-chrono-0_4,   rusqlite: chrono
+serde_json = "1.0" # postgres(_types)?: with-serde_json-1, rusqlite: serde_json
+# time = "0.2"       # postgres(_types)?: with-time-0_2,     rusqlite: time
+uuid = "0.8"       # postgres(_types)?: with-uuid-0_8,     rusqlite: uuid
+
+# no geo_types; there's no rusqlite feature flag for them.
+ 
 # validator = "0.12.0"
 # termcolor = "1.1.0"   
+
+[dependencies.postgres]
+version = "0.19.0"
+# see https://docs.rs/postgres/0.19.0/postgres/#features
+features = [
+  "with-bit-vec-0_6",  # Enable support for the bit-vec crate.
+  "with-chrono-0_4",   # Enable support for the chrono crate.
+  "with-serde_json-1", # Enable support for the serde_json crate.
+  "with-uuid-0_8",     # Enable support for the uuid crate.
+  "with-time-0_2",     # Enable support for the time crate.
+]
+
+[dependencies.postgres-types]
+version = "0.2.0"
+features = [
+  "with-bit-vec-0_6",
+  "with-chrono-0_4",
+  "with-serde_json-1",
+  "with-uuid-0_8",
+  "with-time-0_2",
+]
+
+[dependencies.rusqlite]
+version = "0.24.2"
+features = [
+  "bundled",    # uses a bundled version of SQLite.
+  "chrono",     # implements [`FromSql`](https://docs.rs/rusqlite/~0/rusqlite/types/trait.FromSql.html)
+                # and [`ToSql`](https://docs.rs/rusqlite/~0/rusqlite/types/trait.ToSql.html) for various
+                # types from the [`chrono` crate](https://crates.io/crates/chrono).
+  "serde_json", # implements [`FromSql`](https://docs.rs/rusqlite/~0/rusqlite/types/trait.FromSql.html)
+                # and [`ToSql`](https://docs.rs/rusqlite/~0/rusqlite/types/trait.ToSql.html) for the
+                # `Value` type from the [`serde_json` crate](https://crates.io/crates/serde_json).
+  "uuid",       # allows storing and retrieving `Uuid` values from the [`uuid`](https://docs.rs/uuid/) crate using blobs.
+  
+  ## The following might be interesting later:
+  # "time",       # implements [`FromSql`](https://docs.rs/rusqlite/~0/rusqlite/types/trait.FromSql.html)
+  #               # `time::OffsetDateTime` type from the [`time` crate](https://crates.io/crates/time).
+  #               # and [`ToSql`](https://docs.rs/rusqlite/~0/rusqlite/types/trait.ToSql.html) for the
+  # "url",        # implements [`FromSql`](https://docs.rs/rusqlite/~0/rusqlite/types/trait.FromSql.html)
+  #               # and [`ToSql`](https://docs.rs/rusqlite/~0/rusqlite/types/trait.ToSql.html) for the
+  #               # `Url` type from the [`url` crate](https://crates.io/crates/url).
+  # "functions",  # https://docs.rs/rusqlite/~0/rusqlite/functions/index.html
+  #               # allows you to load Rust closures into SQLite connections for use in queries.
+  #               # Note: This feature requires SQLite 3.7.3 or later.
+  # "blob",       # https://docs.rs/rusqlite/~0/rusqlite/blob/index.html
+  #               # gives `std::io::{Read, Write, Seek}` access to SQL BLOBs. Note: This feature
+  #               # requires SQLite 3.7.4 or later.  Also note: doesn't help with insertion, necessarily.
+  # "vtab",       # for [virtual table](https://sqlite.org/vtab.html) support (allows you to write virtual table implementations in Rust). Currently, only read-only virtual tables are supported.
+  # "csvtab",     # https://sqlite.org/csv.html, CSV virtual table written in Rust. (Implies `vtab`.)
+  # "series",     # exposes [`generate_series(...)`](https://www.sqlite.org/series.html) Table-Valued Function. (Implies `vtab`.)
+  # "array",      # https://sqlite.org/carray.html), The `rarray()` Table-Valued Function. (Implies `vtab`.)
+  # "i128_blob",  # allows storing values of type `i128` type in SQLite databases. Internally, the data is stored as a 16 byte big-endian blob, with the most significant bit flipped, which allows ordering and comparison between different blobs storing i128s to work as expected.
+  # "load_extension", # https://docs.rs/rusqlite/~0/rusqlite/struct.LoadExtensionGuard.html) allows loading dynamic library-based SQLite extensions.
+]

@@ -1,10 +1,13 @@
 mod cli;
 mod pg;
+mod sqlite;
 use cli::new;
+use core::panic;
 use fallible_iterator::FallibleIterator;
+use pg::transfer_table_rows;
 use rusqlite::Connection;
 use std::iter;
-fn main() {
+fn main() -> Result<(), pg::SqlError> {
     // use petgraph::dot::Dot;
     let args = cli::new().get_matches();
     let src = args.value_of("SRC").unwrap(); // enforced by clap
@@ -13,9 +16,26 @@ fn main() {
     // TODO: if the dest _file_ exists, require an --overwrite arg
     let mut conn = pg::connect(src);
     let sch = pg::SchemaInformation::new(&mut conn, "public");
-    println!("{}", sch.dump_tables());
-    pg::do_the_thing(dest, &sch.dump_tables()).unwrap();
-    // let mut rows = pg::dump_table(&mut conn, "_file").unwrap();
+    let mut lite = rusqlite::Connection::open(dest).unwrap();
+    sqlite::create_all_tables(&mut lite, &sch.create_table_statements())?;
+    let mut txn = lite.transaction()?;
+    for table_name in sch.table_order {
+        println!("transferring {}", &table_name);
+        let tbl = &sch.tables.get(&table_name).unwrap();
+        pg::transfer_table_rows(&mut conn, &mut txn, tbl)?;
+    }
+    println!("committing...");
+    txn.commit()?;
+    println!("committed.");
+    Ok(())
+    // for tbl in sch
+    //     .get_table_order()
+    //     .iter()
+    //     .map(|table_name| &sch.tables.get(table_name).unwrap())
+    // {
+    //     pg::transfer_table_rows(&mut conn, &mut lite, tbl)?;
+    // }
+
     // while let Some(row) = rows.next().unwrap() {
     //     println!("{:?}", row);
     // }
