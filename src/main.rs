@@ -17,6 +17,8 @@ fn main() -> Result<(), pg::SqlError> {
     let schema_name: &str = args.value_of("schema").unwrap();
     let overwrite = args.is_present("overwrite");
     let no_views = args.is_present("no_views");
+    let schema_only = args.is_present("schema_only");
+    let data_only = args.is_present("data_only");
 
     let mut conn = pg::connect(src);
     {
@@ -41,27 +43,35 @@ fn main() -> Result<(), pg::SqlError> {
     let mut lite = rusqlite::Connection::open(dest).unwrap();
     let sch = pg::SchemaInformation::new(&mut conn, schema_name);
 
-    sqlite::create_all_tables(&mut lite, &sch.create_table_statements())?;
+    if data_only {
+        println!("skipping table creation");
+    } else {
+        sqlite::create_all_tables(&mut lite, &sch.create_table_statements())?;
+    }
 
-    if no_views {
+    if no_views || data_only {
         println!("skipping view creation");
     } else {
         sqlite::create_all_views(&mut lite, &sch.create_view_statements())?;
     }
 
-    let mut txn = lite.transaction()?;
-    for table_name in sch.order {
-        match &sch.tables.get(&table_name) {
-            Some(tbl) => {
-                println!("transferring {}", &table_name);
-                pg::transfer_table_rows(&mut conn, &mut txn, tbl)?;
+    if schema_only {
+        println!("skipping data insertion");
+    } else {
+        let mut txn = lite.transaction()?;
+        for table_name in sch.order {
+            match &sch.tables.get(&table_name) {
+                Some(tbl) => {
+                    println!("transferring {}", &table_name);
+                    pg::transfer_table_rows(&mut conn, &mut txn, tbl)?;
+                }
+                _ => {} // not a table
             }
-            _ => {} // not a table
         }
+        println!("committing rows...");
+        txn.commit()?;
+        println!("committed.");
     }
-    println!("committing rows...");
-    txn.commit()?;
-    println!("committed.");
 
     // now indices & fkey costraints
     Ok(())
