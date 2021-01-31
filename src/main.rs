@@ -6,19 +6,41 @@ use core::panic;
 use fallible_iterator::FallibleIterator;
 use pg::transfer_table_rows;
 use rusqlite::Connection;
-use std::iter;
+use std::{fs, path::Path};
+
 fn main() -> Result<(), pg::SqlError> {
     // use petgraph::dot::Dot;
     let args = cli::new().get_matches();
+
     let src = args.value_of("SRC").unwrap(); // enforced by clap
     let dest = args.value_of("DEST").unwrap();
-    let no_views = args.is_present("no_views");
     let schema_name: &str = args.value_of("schema").unwrap();
-    // TODO: validate the dest's parent directory exists
-    // TODO: if the dest _file_ exists, require an --overwrite arg
+    let overwrite = args.is_present("overwrite");
+    let no_views = args.is_present("no_views");
+
     let mut conn = pg::connect(src);
-    let sch = pg::SchemaInformation::new(&mut conn, schema_name);
+    {
+        let dest_file = Path::new(dest);
+        if dest_file.exists() {
+            if !dest_file.is_file() {
+                panic!("{} is not a file", dest);
+            } else {
+                let dest_metadata = fs::metadata(dest_file).unwrap();
+                if !overwrite {
+                    assert_eq!(
+                        dest_metadata.len(),
+                        0,
+                        "{} is already populated; pass `--overwrite` if you'd like to overwrite it",
+                        dest
+                    );
+                }
+            }
+        }
+    }
+    // TODO: if the dest _file_ exists, require an --overwrite arg
     let mut lite = rusqlite::Connection::open(dest).unwrap();
+    let sch = pg::SchemaInformation::new(&mut conn, schema_name);
+
     sqlite::create_all_tables(&mut lite, &sch.create_table_statements())?;
 
     if no_views {
@@ -40,6 +62,7 @@ fn main() -> Result<(), pg::SqlError> {
     println!("committing rows...");
     txn.commit()?;
     println!("committed.");
+
     // now indices & fkey costraints
     Ok(())
 
