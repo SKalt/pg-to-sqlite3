@@ -11,5 +11,14 @@ pub fn create_all_tables(conn: &mut Connection, create_table_stmt: &str) -> Resu
     let result = txn.commit();
     return result;
 }
-// TODO: create tables
-// TODO: dump tables
+
+pub fn create_all_views(conn: &mut Connection, view_defns: &str) -> Result<(), Error> {
+    let result = conn.execute_batch(view_defns);
+    match result {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            println!("{}", view_defns);
+            Err(e)
+        }
+    }
+}

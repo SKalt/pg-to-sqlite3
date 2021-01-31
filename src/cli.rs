@@ -33,6 +33,12 @@ pub fn new<'a>() -> App<'a, 'a> {
                 .help("whether to overwrite DEST if it exists"),
         )
         .arg(
+            Arg::with_name("no_views")
+                .long("no-views")
+                .takes_value(false)
+                .help("whether to omit views"),
+        )
+        .arg(
             Arg::with_name("progress")
                 .long("progress")
                 .takes_value(false)

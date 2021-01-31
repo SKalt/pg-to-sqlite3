@@ -57,6 +57,7 @@ pub fn get_table_defns(
     }
 }
 
+/// WARNING: postgres converts `CAST(thing AS TYPE)` to `thing::TYPE`, which sqlite can't handle.
 pub fn get_view_defns(conn: &mut postgres::Client, views: &mut HashMap<String, View>) {
     let oids: Vec<u32> = views.iter().map(|(_, v)| v.oid).collect();
     let defns = query::must_succeed(conn.query(

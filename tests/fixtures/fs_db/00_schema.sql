@@ -10,10 +10,7 @@ CREATE TABLE _directory (
   id SERIAL PRIMARY KEY,
   absolute_path TEXT UNIQUE NOT NULL
 );
-CREATE TABLE _file_name(
-  id SERIAL PRIMARY KEY,
-  name TEXT UNIQUE
-);
+CREATE TABLE _file_name(id SERIAL PRIMARY KEY, name TEXT UNIQUE);
 CREATE TABLE _file (
   -- plural to avoid keywords
   id SERIAL PRIMARY KEY,
@@ -28,7 +25,6 @@ CREATE TABLE _file (
     blob_id
   )
 );
-
 -- this reads golang's representation of file modes, NOT the POSIX standard file modes.
 -- https://golang.org/pkg/os/#FileMode
 -- https://golang.org/src/os/types.go?s=2790:2823#L55

@@ -85,7 +85,7 @@ pub struct SchemaInformation {
     // -- nodes --
     pub tables: HashMap<String, Table>,
     pub views: HashMap<String, View>,
-    pub table_order: Vec<String>,
+    pub order: Vec<String>,
     // check_constraints,
     // not_null_constraints,
     // -- edges --
@@ -116,7 +116,7 @@ pub struct Edge {
     type_: String,
 }
 
-pub fn table_order(g: &Graph<Node, Edge>) -> Vec<String> {
+pub fn rel_order(g: &Graph<Node, Edge>) -> Vec<String> {
     // TODO: rename to "rel_order": not just tables
     let sorted = toposort(g, None);
     match sorted {
@@ -124,7 +124,7 @@ pub fn table_order(g: &Graph<Node, Edge>) -> Vec<String> {
             r.reverse();
             return r
                 .iter()
-                .filter(|idx| (&(g[**idx]).type_ == "t"))
+                // .filter(|idx| (&(g[**idx]).type_ == "t"))
                 .map(|idx| (&(g[*idx]).name).to_owned())
                 .collect();
         }
@@ -187,7 +187,7 @@ impl SchemaInformation {
         let view_rel_usage = get_view_refs(conn, schema);
         let dependency_graph =
             to_dependency_graph(&tables, &views, &view_rel_usage, &fkey_constraints);
-        let table_order = table_order(&dependency_graph);
+        let table_order = rel_order(&dependency_graph);
         to_dependency_graph(&tables, &views, &view_rel_usage, &fkey_constraints);
 
         return SchemaInformation {
@@ -197,7 +197,7 @@ impl SchemaInformation {
             fkey_constraints,
             view_rel_usage,
             dependency_graph,
-            table_order, // this gets filled in later
+            order: table_order, // this gets filled in later
         };
     }
     fn validate(&self) -> Result<(), String> {
@@ -227,7 +227,7 @@ impl SchemaInformation {
 
     pub fn create_table_statements(&self) -> String {
         let tables: Vec<String> = self
-            .table_order
+            .order
             .iter()
             .filter(|t| self.tables.contains_key(*t))
             .map(|t| {
@@ -239,6 +239,18 @@ impl SchemaInformation {
             })
             .collect();
         return tables.join("\n");
+    }
+    pub fn create_view_statements(&self) -> String {
+        let views: Vec<String> = self
+            .order
+            .iter()
+            .filter(|name| self.views.contains_key(*name))
+            .map(|name| {
+                let view = self.views.get(name).unwrap();
+                return format!("CREATE VIEW {} AS\n{}\n", view.name, view.defn);
+            })
+            .collect();
+        return views.join("\n");
     }
 }
 
