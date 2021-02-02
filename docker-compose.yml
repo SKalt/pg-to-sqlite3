@@ -3,9 +3,19 @@ services:
   fs_db:
     build:
       context: "./tests/fixtures/fs_db"
-    # volumes:
-    #   - ./:/root
     environment:
       - POSTGRES_PASSWORD=password
     ports: 
       - 5432:5432
+#   cockroachdb_1: &cdb
+#     image: cockroachdb/cockroach:v20.2.3
+#     command: ["start", "--insecure", "--join=cockroachdb_1,cockroachdb_2,cockroachdb_3"]
+#     ports:
+#       - 26257:26257
+#       - 8080:8080
+#   cockroachdb_2: *cdb
+#   cockroachdb_3: *cdb
+# volumes:
+#   cockroachdb_1:
+#   cockroachdb_2:
+#   cockroachdb_3:

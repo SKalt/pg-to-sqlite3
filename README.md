@@ -31,7 +31,14 @@ check_schema_compatible() {
 
 check_compatible;
 ```
-
+- (schemas: sqlite has `ATTACH`ed dbs, but attachments don't persist between connections)
+- (roles)
+- (users)
+- [ extensions: need careful translation ]
+- tables -> columns -> tables
+- (partitions: see schemas)
+- views
+- constraints
 
 Inspired by [`db-to-sqlite`][2] and [datasette][1].
 
