@@ -9,7 +9,6 @@ use rusqlite::Connection;
 use std::{fs, path::Path};
 
 fn main() -> Result<(), pg::SqlError> {
-    // use petgraph::dot::Dot;
     let args = cli::new().get_matches();
 
     let src = args.value_of("SRC").unwrap(); // enforced by clap
@@ -94,8 +93,9 @@ fn main() -> Result<(), pg::SqlError> {
         )?;
     }
 
-    // now indices & fkey costraints
+    // now indices
     Ok(())
 
+    // use petgraph::dot::Dot;
     // println!("{:?}", Dot::new(&g));
 }

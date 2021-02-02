@@ -1,4 +1,6 @@
-use super::{ColInfo, FkeyConstraint, Rel, Table, View, ViewRelUsage};
+use super::{
+    ColInfo, FkeyConstraint, PkeyConstraint, Rel, Table, UniqueConstraint, View, ViewRelUsage,
+};
 use crate::pg::object_types::{get_pg_type_from_name, pretty_relkind};
 use crate::pg::query;
 use std::{collections::HashMap, println};
@@ -165,6 +167,77 @@ pub(crate) fn get_all_fkey_constraints(
     .collect();
 }
 
+pub fn get_all_pkey_constraints(conn: &mut postgres::Client, schema: &str) -> Vec<PkeyConstraint> {
+    return query::must_succeed(conn.query(
+        "
+        SELECT
+            tc.constraint_name,
+            tc.table_name,
+            array_agg(kcu.column_name::TEXT) AS columns,
+            tc.is_deferrable,
+            tc.initially_deferred
+        FROM information_schema.table_constraints AS tc
+            JOIN information_schema.key_column_usage kcu ON tc.constraint_name = kcu.constraint_name
+        WHERE tc.constraint_schema = $1 AND tc.constraint_type = 'PRIMARY KEY'
+        GROUP BY tc.constraint_name,
+            tc.constraint_type,
+            tc.table_name,
+            tc.is_deferrable,
+            tc.initially_deferred;
+        ",
+        &[&schema],
+    ))
+    .iter()
+    .map(|row| {
+        let name = row.get("constraint_name");
+        let table = row.get("table_name");
+        let columns = row.get("columns");
+        return PkeyConstraint {
+            name,
+            table,
+            columns,
+        };
+    })
+    .collect();
+}
+
+pub fn get_all_unique_constraints(
+    conn: &mut postgres::Client,
+    schema: &str,
+) -> Vec<UniqueConstraint> {
+    return query::must_succeed(conn.query(
+        "
+        SELECT
+            tc.constraint_name,
+            tc.table_name,
+            array_agg(kcu.column_name::TEXT) AS columns,
+            tc.is_deferrable,
+            tc.initially_deferred
+        FROM information_schema.table_constraints AS tc
+            JOIN information_schema.key_column_usage kcu ON tc.constraint_name = kcu.constraint_name
+        WHERE tc.constraint_schema = $1 AND tc.constraint_type = 'UNIQUE'
+        GROUP BY tc.constraint_name,
+            tc.constraint_type,
+            tc.table_name,
+            tc.is_deferrable,
+            tc.initially_deferred;
+        ",
+        &[&schema],
+    ))
+    .iter()
+    .map(|row| {
+        let name = row.get("constraint_name");
+        let table = row.get("table_name");
+        let columns = row.get("columns");
+        return UniqueConstraint {
+            name,
+            table,
+            columns,
+        };
+    })
+    .collect();
+}
+
 pub(crate) fn get_view_refs(conn: &mut postgres::Client, schema: &str) -> Vec<ViewRelUsage> {
     return query::must_succeed(conn.query(
         "
@@ -197,8 +270,6 @@ pub(crate) fn get_view_refs(conn: &mut postgres::Client, schema: &str) -> Vec<Vi
     })
     .collect();
 }
-
-pub fn list_table_constraints(/* schema, table */) /* -> constraints */ {}
 
 fn list_view_dependencies(conn: &mut postgres::Client, schema: &str) -> Vec<ViewRelUsage> {
     return query::must_succeed(conn.query(
@@ -233,13 +304,3 @@ fn list_view_dependencies(conn: &mut postgres::Client, schema: &str) -> Vec<View
     })
     .collect();
 }
-
-// may fail if more than 4.5 billion rows
-// pub fn count_rows_in_table(conn: &mut postgres::Client, schema: &str, table: &str) -> u32 {
-//     let query = "SELECT count(*) AS n FROM " + schema; // &format!("SELECT count(*) AS n FROM {}.{}", schema, table);
-//     let n = query::must_succeed(conn.query(query, &[]))
-//         .first()
-//         .unwrap()
-//         .get("n");
-//     return n;
-// }

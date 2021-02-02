@@ -23,8 +23,8 @@ mod validate;
 use fallible_iterator::FallibleIterator;
 
 use introspection::{
-    get_all_fkey_constraints, get_table_defns, get_view_defns, get_view_refs,
-    list_relations_in_schema,
+    get_all_fkey_constraints, get_all_pkey_constraints, get_all_unique_constraints,
+    get_table_defns, get_view_defns, get_view_refs, list_relations_in_schema,
 };
 use object_types::{sqlite_type_from_pg_type, translate_row};
 pub use query::connect;
@@ -38,7 +38,9 @@ pub struct Table {
     name: String,
     column_order: Vec<String>,
     columns: HashMap<String, ColInfo>,
+    pk_constraints: Vec<PkeyConstraint>,
     fkey_constraints: Vec<FkeyConstraint>,
+    unique_constraints: Vec<UniqueConstraint>,
     approx_n_rows: i64,
 }
 
@@ -63,6 +65,18 @@ fn create_sqlite_table_stmt(t: Table) -> String {
     // );
 }
 
+#[derive(Debug, Clone)]
+pub struct PkeyConstraint {
+    name: String,
+    table: String,
+    columns: Vec<String>,
+}
+#[derive(Debug, Clone)]
+pub struct UniqueConstraint {
+    name: String,
+    table: String,
+    columns: Vec<String>,
+}
 #[derive(Debug, Clone)]
 pub struct FkeyConstraint {
     name: String,
@@ -157,6 +171,8 @@ impl SchemaInformation {
                 approx_n_rows: rel.approx_n_rows,
                 column_order: vec![],
                 fkey_constraints: vec![],
+                unique_constraints: vec![],
+                pk_constraints: vec![],
                 columns: HashMap::new(), // pupulated later
             };
             if tables.contains_key(&table.name) {
@@ -199,7 +215,15 @@ impl SchemaInformation {
             tbl.fkey_constraints.push(fk.clone());
             fkey_constraints.insert(fk.name.to_owned(), fk);
         }
-
+        for pk in get_all_pkey_constraints(conn, schema) {
+            let tbl = tables.get_mut(&pk.table).unwrap();
+            tbl.pk_constraints.push(pk);
+            // TODO: validate pk name uniqueness?
+        }
+        for uq in get_all_unique_constraints(conn, schema) {
+            let tbl = tables.get_mut(&uq.table).unwrap();
+            tbl.unique_constraints.push(uq);
+        }
         let view_rel_usage = get_view_refs(conn, schema);
         let dependency_graph =
             to_dependency_graph(&tables, &views, &view_rel_usage, &fkey_constraints);
@@ -347,6 +371,27 @@ impl fmt::Display for ColInfo {
     }
 }
 
+impl fmt::Display for PkeyConstraint {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "CONSTRAINT {} PRIMARY KEY ({})",
+            self.name,
+            self.columns.join(", ")
+        )
+    }
+}
+
+impl fmt::Display for UniqueConstraint {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "CONSTRAINT {} UNIQUE ({})",
+            self.name,
+            self.columns.join(", ")
+        )
+    }
+}
 impl fmt::Display for FkeyConstraint {
     /// https://www.sqlite.org/syntax/table-constraint.html
     /// https://www.sqlite.org/syntax/foreign-key-clause.html
@@ -381,8 +426,19 @@ impl fmt::Display for Table {
             .iter()
             .map(|fk| format!("{}", fk))
             .collect::<Vec<String>>();
+        let pk_constraints = self
+            .pk_constraints
+            .iter()
+            .map(|pk| format!("{}", pk))
+            .collect::<Vec<String>>();
+        let unique_constraints = self
+            .unique_constraints
+            .iter()
+            .map(|pk| format!("{}", pk))
+            .collect::<Vec<String>>();
+        let constraints = [pk_constraints, unique_constraints, fk_constraints].concat();
         if self.fkey_constraints.len() > 0 {
-            write!(f, "  , {}\n", fk_constraints.join("\n  , "))?;
+            write!(f, "  , {}\n", constraints.join("\n  , "))?;
         }
         write!(f, "); -- ~ {} rows\n", self.approx_n_rows)?;
         Ok(())
