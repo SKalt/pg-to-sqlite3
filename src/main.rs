@@ -21,7 +21,21 @@ fn main() -> Result<(), pg::SqlError> {
     let data_only = args.is_present("data_only");
 
     let mut conn = pg::connect(src);
-    {
+    let sch = pg::SchemaInformation::new(&mut conn, schema_name);
+
+    if dest == "stdout" || dest == "STDOUT" {
+        if data_only {
+            println!("-- skipping table creation");
+        } else {
+            println!("{}", &sch.create_table_statements());
+        }
+        if no_views || data_only {
+            println!("-- skipping view creation");
+        } else {
+            println!("{}", &sch.create_view_statements());
+        }
+        return Ok(());
+    } else {
         let dest_file = Path::new(dest);
         if dest_file.exists() {
             if !dest_file.is_file() {
@@ -41,23 +55,26 @@ fn main() -> Result<(), pg::SqlError> {
     }
     // TODO: if the dest _file_ exists, require an --overwrite arg
     let mut lite = rusqlite::Connection::open(dest).unwrap();
-    let sch = pg::SchemaInformation::new(&mut conn, schema_name);
 
     if data_only {
-        println!("skipping table creation");
+        println!("-- skipping table creation");
     } else {
         sqlite::create_all_tables(&mut lite, &sch.create_table_statements())?;
     }
 
     if no_views || data_only {
-        println!("skipping view creation");
+        println!("-- skipping view creation");
     } else {
         sqlite::create_all_views(&mut lite, &sch.create_view_statements())?;
     }
 
     if schema_only {
-        println!("skipping data insertion");
+        println!("-- skipping data insertion");
     } else {
+        lite.set_db_config(
+            rusqlite::config::DbConfig::SQLITE_DBCONFIG_ENABLE_FKEY,
+            false,
+        )?;
         let mut txn = lite.transaction()?;
         for table_name in sch.order {
             match &sch.tables.get(&table_name) {
@@ -71,6 +88,10 @@ fn main() -> Result<(), pg::SqlError> {
         println!("committing rows...");
         txn.commit()?;
         println!("committed.");
+        lite.set_db_config(
+            rusqlite::config::DbConfig::SQLITE_DBCONFIG_ENABLE_FKEY,
+            true,
+        )?;
     }
 
     // now indices & fkey costraints

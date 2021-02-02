@@ -12,7 +12,7 @@ pub fn get_table_defns(
     let cols = query::must_succeed(conn.query(
         "
         SELECT
-              col.column_name
+            col.column_name
             , col.ordinal_position
             , col.table_name
             , col.udt_name
@@ -38,22 +38,13 @@ pub fn get_table_defns(
         let is_nullable: &str = row.get("is_nullable");
         let pg_type = get_pg_type_from_name(&data_type).unwrap_or_else(|err| panic!(err));
         let col = ColInfo {
-            name: column_name,
+            name: column_name.clone(),
             data_type: pg_type,
             nullable: (is_nullable == "YES"),
         };
         let table = tables.get_mut(&table_name).unwrap();
-        table.columns.push(col);
-        // let data_type: String = row.get("data_type");
-        // let ordinal_position: String = row.get("ordinal_position");
-        // let character_maximum_length: String = row.get("character_maximum_length");
-        // let character_octet_length: String = row.get("character_octet_length");
-        // let numeric_precision: String = row.get("numeric_precision");
-        // let numeric_precision_radix: String = row.get("numeric_precision_radix");
-        // let numeric_scale: String = row.get("numeric_scale");
-        // let datetime_precision: String = row.get("datetime_precision");
-        // let interval_type: String = row.get("interval_type");
-        // let interval_precision: String = row.get("interval_precision");
+        table.column_order.push(column_name.clone());
+        table.columns.insert(column_name, col);
     }
 }
 
@@ -133,37 +124,42 @@ pub(crate) fn get_all_fkey_constraints(
 ) -> Vec<FkeyConstraint> {
     return query::must_succeed(conn.query(
         "
-        SELECT
-            table_contraints.constraint_name,
-            table_contraints.table_name,
-            key_column_usage.column_name,
-            constraint_column_usage.table_name AS foreign_table_name,
-            constraint_column_usage.column_name AS foreign_column_name
-        FROM information_schema.table_constraints AS table_contraints
-        JOIN
-            information_schema.key_column_usage AS key_column_usage ON
-            table_contraints.constraint_name = key_column_usage.constraint_name
-        JOIN information_schema.constraint_column_usage AS constraint_column_usage ON
-            constraint_column_usage.constraint_name = table_contraints.constraint_name
-        WHERE constraint_type = 'FOREIGN KEY'
-            AND table_contraints.constraint_schema = $1
+        SELECT tc.constraint_name,
+            tc.constraint_type,
+            tc.table_name,
+            array_agg(kcu.column_name::TEXT) AS columns,
+            ccu.table_name AS foreign_table_name,
+            array_agg(ccu.column_name::TEXT) AS foreign_columns,
+            tc.is_deferrable,
+            tc.initially_deferred
+        FROM information_schema.table_constraints AS tc
+            JOIN information_schema.key_column_usage AS kcu
+                ON tc.constraint_name = kcu.constraint_name
+            JOIN information_schema.constraint_column_usage AS ccu
+                ON tc.constraint_name = ccu.constraint_name
+        WHERE tc.constraint_schema = $1 AND tc.constraint_type = 'FOREIGN KEY'
+        GROUP BY tc.constraint_name,
+            tc.constraint_type,
+            tc.table_name,
+            tc.is_deferrable,
+            tc.initially_deferred,
+            ccu.table_name
         ",
         &[&schema],
     ))
     .iter()
     .map(|row| {
         let table = row.get("table_name");
-        // let table = get_name("table_name")(row);
-        let col = row.get("column_name");
+        let col = row.get("columns");
         let constraint = row.get("constraint_name");
         let foreign_table = row.get("foreign_table_name");
-        let foreign_column = row.get("foreign_column_name");
+        let foreign_columns = row.get("foreign_columns");
         return FkeyConstraint {
             table,
-            column: col,
+            columns: col,
             name: constraint,
             foreign_table,
-            foreign_column,
+            foreign_columns,
         };
     })
     .collect();

@@ -3,6 +3,7 @@
 // might include multiple, parallel edges like "table A columng alpha depnds on
 // (references) table B column beta; table A column x depends on table B column y"
 
+use fmt::Formatter;
 use petgraph::graph::Graph;
 use petgraph::{self, algo::toposort};
 use postgres::{self, RowIter, Transaction};
@@ -35,29 +36,40 @@ pub use query::connect;
 pub struct Table {
     oid: u32,
     name: String,
-    columns: Vec<ColInfo>,
+    column_order: Vec<String>,
+    columns: HashMap<String, ColInfo>,
+    fkey_constraints: Vec<FkeyConstraint>,
     approx_n_rows: i64,
 }
 
 fn create_sqlite_table_stmt(t: Table) -> String {
-    let cols: Vec<String> = t.columns.iter().map(|col| format!("{}", col)).collect();
-    return format!(
-        "CREATE TABLE {} (\n  {}\n  );\n  -- ~ {} rows\n",
-        &t.name,
-        cols.join("\n  , "),
-        &t.approx_n_rows
-    );
+    return format!("{}", t);
+    // let cols: Vec<String> = t
+    //     .column_order
+    //     .iter()
+    //     .map(|col_name| t.columns.get(col_name).unwrap())
+    //     .map(|col| format!("{}", col))
+    //     .collect();
+    // return format!(
+    //     "CREATE TABLE {} (\n  {}\n{});\n  -- ~ {} rows\n",
+    //     &t.name,
+    //     cols.join("\n  , "),
+    //     &t.fkey_constraints
+    //         .iter()
+    //         .map(|fk| format!("{}", fk))
+    //         .collect::<Vec<String>>()
+    //         .join("\n  ,"),
+    //     &t.approx_n_rows
+    // );
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FkeyConstraint {
-    // oid: u32,
-    /// the name of the constraint
     name: String,
     table: String,
-    column: String,
-    foreign_table: String,
-    foreign_column: String,
+    columns: Vec<String>,
+    foreign_table: String,        // could be Vec<String>
+    foreign_columns: Vec<String>, // could be Vec<String>
 }
 #[derive(Debug)]
 struct CheckConstraint {
@@ -143,7 +155,9 @@ impl SchemaInformation {
                 oid: rel.oid,
                 name: rel.name.to_owned(),
                 approx_n_rows: rel.approx_n_rows,
-                columns: vec![], // pupulated later
+                column_order: vec![],
+                fkey_constraints: vec![],
+                columns: HashMap::new(), // pupulated later
             };
             if tables.contains_key(&table.name) {
                 panic!("duplicate table {}", table.name)
@@ -181,6 +195,8 @@ impl SchemaInformation {
             if fkey_constraints.contains_key(&fk.name) {
                 panic!("duplicate foreign key name {}", fk.name); //
             }
+            let tbl = tables.get_mut(&fk.table).unwrap();
+            tbl.fkey_constraints.push(fk.clone());
             fkey_constraints.insert(fk.name.to_owned(), fk);
         }
 
@@ -309,23 +325,67 @@ pub struct ColInfo {
     data_type: PgType,
     nullable: bool,
 }
+
 impl fmt::Display for ColInfo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let sqlite_col = sqlite_type_from_pg_type(&self.data_type)
+        let sqlite_type = sqlite_type_from_pg_type(&self.data_type)
             .unwrap()
             .to_string()
             .to_ascii_uppercase();
+
         write!(
             f,
             "{} {} -- {}",
             self.name,
-            sqlite_col,
+            sqlite_type,
             self.data_type.to_string().to_ascii_uppercase()
         )?;
         if self.nullable == false {
             write!(f, " NOT NULL")?;
         }
         return Ok(());
+    }
+}
+
+impl fmt::Display for FkeyConstraint {
+    /// https://www.sqlite.org/syntax/table-constraint.html
+    /// https://www.sqlite.org/syntax/foreign-key-clause.html
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "CONSTRAINT {} FOREIGN KEY ({}) REFERENCES {}({})",
+            self.name,
+            self.columns.join(", "),
+            self.table,
+            self.foreign_columns.join(", ")
+        )
+    }
+}
+
+impl fmt::Display for Table {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let cols: Vec<String> = self
+            .column_order
+            .iter()
+            .map(|col_name| self.columns.get(col_name).unwrap())
+            .map(|col| format!("{}", col))
+            .collect();
+        write!(
+            f,
+            "CREATE TABLE {} (\n  {}\n",
+            &self.name,
+            cols.join("\n  , "),
+        )?;
+        let fk_constraints = self
+            .fkey_constraints
+            .iter()
+            .map(|fk| format!("{}", fk))
+            .collect::<Vec<String>>();
+        if self.fkey_constraints.len() > 0 {
+            write!(f, "  , {}\n", fk_constraints.join("\n  , "))?;
+        }
+        write!(f, "); -- ~ {} rows\n", self.approx_n_rows)?;
+        Ok(())
     }
 }
 

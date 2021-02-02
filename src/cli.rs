@@ -24,7 +24,7 @@ pub fn new<'a>() -> App<'a, 'a> {
                 .long("dest")
                 .takes_value(true)
                 .required(true)
-                .help("a path to a sqlite3 file"),
+                .help("a path to a sqlite3 file or 'STDOUT'"),
         )
         .arg(
             Arg::with_name("overwrite")
