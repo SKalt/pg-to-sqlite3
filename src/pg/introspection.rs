@@ -70,20 +70,20 @@ pub fn get_view_defns(conn: &mut postgres::Client, views: &mut HashMap<String, V
     }
 }
 
-pub fn list_schemas(conn: &mut postgres::Client) -> Vec<String> {
-    // TODO: deprecate? We only need to check 1 schema.
-    return query::must_succeed(conn.query(
-        "
-        SELECT schema_name
-        FROM information_schema.schemata
-        WHERE schema_name NOT LIKE 'pg_%' AND schema_name != 'information_schema';
-        ",
-        &[],
-    ))
-    .iter()
-    .map(|row| row.get("schema_name"))
-    .collect();
-}
+// pub fn list_schemas(conn: &mut postgres::Client) -> Vec<String> {
+//     // TODO: deprecate? We only need to check 1 schema.
+//     return query::must_succeed(conn.query(
+//         "
+//         SELECT schema_name
+//         FROM information_schema.schemata
+//         WHERE schema_name NOT LIKE 'pg_%' AND schema_name != 'information_schema';
+//         ",
+//         &[],
+//     ))
+//     .iter()
+//     .map(|row| row.get("schema_name"))
+//     .collect();
+// }
 
 pub fn list_relations_in_schema(conn: &mut postgres::Client, schema_name: &str) -> Vec<Rel> {
     return query::must_succeed(conn.query(
@@ -271,36 +271,36 @@ pub(crate) fn get_view_refs(conn: &mut postgres::Client, schema: &str) -> Vec<Vi
     .collect();
 }
 
-fn list_view_dependencies(conn: &mut postgres::Client, schema: &str) -> Vec<ViewRelUsage> {
-    return query::must_succeed(conn.query(
-        "
-        SELECT DISTINCT
-            source_rel.oid AS source_oid,
-            source_rel.relname AS source_table,
-            dependent_rel.relname AS dependent_rel,
-            dependent_rel.oid AS dependent_oid
-        FROM pg_catalog.pg_depend AS dep
-        JOIN pg_catalog.pg_rewrite AS rewrite ON dep.objid = rewrite.oid
-        JOIN pg_catalog.pg_class AS dependent_rel ON rewrite.ev_class = dependent_rel.oid
-        JOIN pg_catalog.pg_class AS source_rel ON dep.refobjid = source_rel.oid
-        JOIN pg_catalog.pg_namespace source_ns ON source_ns.oid = source_rel.relnamespace
-        WHERE source_ns.nspname = $1
-            AND source_rel.oid <> dependent_rel.oid
-        ",
-        &[&schema],
-    ))
-    .iter()
-    .map(|row| {
-        let view_oid: u32 = row.get("src_oid");
-        let table_oid: u32 = row.get("dest_oid");
-        let view_name = row.get("view_name");
-        let table_name = row.get("table_name");
-        return ViewRelUsage {
-            view_oid,
-            view_name,
-            rel_name: table_name,
-            rel_oid: table_oid,
-        };
-    })
-    .collect();
-}
+// fn list_view_dependencies(conn: &mut postgres::Client, schema: &str) -> Vec<ViewRelUsage> {
+//     return query::must_succeed(conn.query(
+//         "
+//         SELECT DISTINCT
+//             source_rel.oid AS source_oid,
+//             source_rel.relname AS source_table,
+//             dependent_rel.relname AS dependent_rel,
+//             dependent_rel.oid AS dependent_oid
+//         FROM pg_catalog.pg_depend AS dep
+//         JOIN pg_catalog.pg_rewrite AS rewrite ON dep.objid = rewrite.oid
+//         JOIN pg_catalog.pg_class AS dependent_rel ON rewrite.ev_class = dependent_rel.oid
+//         JOIN pg_catalog.pg_class AS source_rel ON dep.refobjid = source_rel.oid
+//         JOIN pg_catalog.pg_namespace source_ns ON source_ns.oid = source_rel.relnamespace
+//         WHERE source_ns.nspname = $1
+//             AND source_rel.oid <> dependent_rel.oid
+//         ",
+//         &[&schema],
+//     ))
+//     .iter()
+//     .map(|row| {
+//         let view_oid: u32 = row.get("src_oid");
+//         let table_oid: u32 = row.get("dest_oid");
+//         let view_name = row.get("view_name");
+//         let table_name = row.get("table_name");
+//         return ViewRelUsage {
+//             view_oid,
+//             view_name,
+//             rel_name: table_name,
+//             rel_oid: table_oid,
+//         };
+//     })
+//     .collect();
+// }

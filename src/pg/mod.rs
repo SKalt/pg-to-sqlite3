@@ -482,6 +482,11 @@ pub fn transfer_table_rows(
 ) -> Result<(), SqlError> {
     let mut rows = dump_table(pg, &table.name)?;
     let col_params: Vec<String> = table.columns.iter().map(|_| "?".to_owned()).collect();
+    let cols: Vec<&ColInfo> = table
+        .column_order
+        .iter()
+        .map(|name| table.columns.get(name).unwrap())
+        .collect();
     let insert = format!(
         "INSERT INTO {} VALUES ({})",
         &table.name,
@@ -493,7 +498,7 @@ pub fn transfer_table_rows(
     let pb = indicatif::ProgressBar::new(countdown);
 
     while let Some(row) = rows.next()? {
-        statement.execute(translate_row(&row))?;
+        statement.execute(translate_row(&row, &cols))?;
         pb.inc(1);
     }
     Ok(())

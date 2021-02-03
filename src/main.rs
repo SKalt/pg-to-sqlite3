@@ -1,11 +1,8 @@
 mod cli;
 mod pg;
 mod sqlite;
-use cli::new;
 use core::panic;
 use fallible_iterator::FallibleIterator;
-use pg::transfer_table_rows;
-use rusqlite::Connection;
 use std::{fs, path::Path};
 
 fn main() -> Result<(), pg::SqlError> {

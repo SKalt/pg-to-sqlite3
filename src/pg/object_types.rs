@@ -1,14 +1,14 @@
-use std::usize;
-
-use bit_vec::{self};
+use bit_vec;
 use chrono;
-use postgres::{Column as PgColumn, Row as PgRow};
+use postgres::{Column as PgColumn, Error, Row as PgRow};
 use postgres_types::{FromSql as FromPgSql, Type as PgType};
 use rusqlite::{
     types::{Null as SqliteNull, Type as SqliteType},
-    Error as SqliteError, ToSql as ToSqlite,
+    ToSql as ToSqlite,
 };
 use serde_json;
+
+use super::ColInfo;
 
 pub fn pretty_relkind(relkind: &str) -> &str {
     match relkind {
@@ -24,16 +24,17 @@ pub fn pretty_relkind(relkind: &str) -> &str {
         other => panic!("unexpected relkind {:?}", other),
     }
 }
-pub fn pretty_deptype(deptype: &str) -> &str {
-    match deptype {
-        "n" => return "normal",
-        "a" => return "automatic",
-        "i" => return "internal",
-        "e" => return "extension",
-        "p" => return "pinned",
-        other => panic!("unknown deptype '{:?}'", other),
-    }
-}
+
+// pub fn pretty_deptype(deptype: &str) -> &str {
+//     match deptype {
+//         "n" => return "normal",
+//         "a" => return "automatic",
+//         "i" => return "internal",
+//         "e" => return "extension",
+//         "p" => return "pinned",
+//         other => panic!("unknown deptype '{:?}'", other),
+//     }
+// }
 
 pub fn get_pg_type_from_name(name: &str) -> Result<PgType, String> {
     match name {
@@ -196,16 +197,16 @@ pub fn get_pg_type_from_name(name: &str) -> Result<PgType, String> {
         "_regnamespace" => Ok(PgType::REGNAMESPACE_ARRAY),
         "regrole" => Ok(PgType::REGROLE),
         "_regrole" => Ok(PgType::REGROLE_ARRAY),
-        // "regcollation" => Ok(PgType::REGCOLLATION),
-        // "_regcollation" => Ok(PgType::REGCOLLATION_ARRAY),
         "pg_mcv_list" => Ok(PgType::PG_MCV_LIST),
-        // "pg_snapshot" => Ok(PgType::PG_SNAPSHOT),
-        // "_pg_snapshot" => Ok(PgType::PG_SNAPSHOT_ARRAY),
-        // "xid8" => Ok(PgType::XID8),
-        // "anycompatible" => Ok(PgType::ANYCOMPATIBLE),
-        // "anycompatiblearray" => Ok(PgType::ANYCOMPATIBLE_ARRAY),
-        // "anycompatiblenonarray" => Ok(PgType::ANYCOMPATIBLENONARRAY),
-        // "anycompatiblerange" => Ok(PgType::ANYCOMPATIBLE_RANGE),
+        // "regcollation"           => ?,
+        // "_regcollation"          => ?,
+        // "pg_snapshot"            => ?,
+        // "_pg_snapshot"           => ?,
+        // "xid8"                   => ?,
+        // "anycompatible"          => ?,
+        // "anycompatiblearray"     => ?,
+        // "anycompatiblenonarray"  => ?,
+        // "anycompatiblerange"     => ?,
         unknown => Err(format!("unknown or unprocessable column type {}", unknown)),
     }
 }
@@ -245,48 +246,113 @@ pub fn sqlite_type_from_pg_type(pg_type: &PgType) -> Result<SqliteType, String> 
     }
 }
 
-fn translate<'a, T>(row: &'a PgRow, index: usize) -> Box<dyn ToSqlite>
+fn translate_cell<'a, Intermediate>(
+    row: &'a PgRow,
+    index: usize,
+) -> Result<Box<dyn ToSqlite>, Error>
 where
-    T: ToSqlite,
-    T: 'static, // TODO: explain why these bounds are needed, and what they are
-    T: FromPgSql<'a>,
+    Intermediate: ToSqlite,
+    Intermediate: 'static, // TODO: explain why these bounds are needed, and what they are
+    Intermediate: FromPgSql<'a>,
 {
-    return Box::new(row.get::<usize, T>(index));
-}
-
-fn translate_col<'a>(row: &'a PgRow, index: usize, col: &'a PgColumn) -> Box<dyn ToSqlite> {
-    match col.type_() {
-        &PgType::CHAR => translate::<'a, i8>(row, index),
-        &PgType::INT2 => translate::<'a, i16>(row, index),
-        &PgType::INT4 => translate::<'a, i32>(row, index),
-        &PgType::INT8 => translate::<'a, i64>(row, index),
-        &PgType::FLOAT4 | &PgType::FLOAT8 => translate::<'a, f64>(row, index),
-        &PgType::BOOL => translate::<'a, bool>(row, index),
-        &PgType::BYTEA => translate::<'a, Vec<u8>>(row, index),
-        &PgType::TEXT | &PgType::NAME | &PgType::VARCHAR | &PgType::BPCHAR | &PgType::UNKNOWN => {
-            translate::<'a, String>(row, index)
-        }
-        &PgType::JSON | &PgType::JSONB => translate::<'a, serde_json::Value>(row, index),
-        &PgType::DATE => translate::<'a, chrono::NaiveDate>(row, index),
-        &PgType::TIME => translate::<'a, chrono::NaiveTime>(row, index),
-        // &PgType::TIMETZ ?
-        &PgType::TIMESTAMP => translate::<'a, chrono::NaiveDateTime>(row, index),
-        &PgType::TIMESTAMPTZ => translate::<'a, chrono::DateTime<chrono::Utc>>(row, index),
-        &PgType::UUID => translate::<'a, uuid::Uuid>(row, index),
-        &PgType::BIT | &PgType::VARBIT => {
-            let bits: bit_vec::BitVec = row.get(index);
-            let bytes: Vec<u8> = bits.to_bytes();
-            return Box::new(bytes);
-        }
-        _ => unimplemented!(),
+    match row.try_get::<usize, Intermediate>(index) {
+        Ok(t) => Ok(Box::new(t)),
+        Err(e) => Err(e),
     }
 }
 
-pub fn translate_row(row: &PgRow) -> Vec<Box<dyn ToSqlite>> {
+fn try_translating_col<'a, 'b>(
+    row: &'a PgRow,
+    index: usize,
+    col: &'a PgColumn,
+    nullable: bool,
+) -> Result<Box<dyn ToSqlite>, Error> {
+    if nullable {
+        match col.type_() {
+            &PgType::CHAR => translate_cell::<'a, Option<i8>>(row, index),
+            &PgType::INT2 => translate_cell::<'a, Option<i16>>(row, index),
+            &PgType::INT4 => translate_cell::<'a, Option<i32>>(row, index),
+            &PgType::INT8 => translate_cell::<'a, Option<i64>>(row, index),
+            &PgType::FLOAT4 | &PgType::FLOAT8 => translate_cell::<'a, Option<f64>>(row, index),
+            &PgType::BOOL => translate_cell::<'a, Option<bool>>(row, index),
+            &PgType::BYTEA => translate_cell::<'a, Option<Vec<u8>>>(row, index),
+            &PgType::TEXT
+            | &PgType::NAME
+            | &PgType::VARCHAR
+            | &PgType::BPCHAR
+            | &PgType::UNKNOWN => translate_cell::<'a, Option<String>>(row, index),
+            &PgType::JSON | &PgType::JSONB => {
+                translate_cell::<'a, Option<serde_json::Value>>(row, index)
+            }
+            &PgType::DATE => translate_cell::<'a, Option<chrono::NaiveDate>>(row, index),
+            &PgType::TIME => translate_cell::<'a, Option<chrono::NaiveTime>>(row, index),
+            // &PgType::TIMETZ ?
+            &PgType::TIMESTAMP => translate_cell::<'a, Option<chrono::NaiveDateTime>>(row, index),
+            &PgType::TIMESTAMPTZ => {
+                translate_cell::<'a, Option<chrono::DateTime<chrono::Utc>>>(row, index)
+            }
+            &PgType::UUID => translate_cell::<'a, Option<uuid::Uuid>>(row, index),
+            &PgType::BIT | &PgType::VARBIT => {
+                match row.try_get::<usize, Option<bit_vec::BitVec>>(index) {
+                    Ok(result) => match result {
+                        Some(bits) => Ok(Box::new(bits.to_bytes())),
+                        None => Ok(Box::new(SqliteNull)),
+                    },
+                    Err(e) => Err(e),
+                }
+            }
+            _ => unimplemented!(),
+        }
+    } else {
+        match col.type_() {
+            &PgType::CHAR => translate_cell::<'a, i8>(row, index),
+            &PgType::INT2 => translate_cell::<'a, i16>(row, index),
+            &PgType::INT4 => translate_cell::<'a, i32>(row, index),
+            &PgType::INT8 => translate_cell::<'a, i64>(row, index),
+            &PgType::FLOAT4 | &PgType::FLOAT8 => translate_cell::<'a, f64>(row, index),
+            &PgType::BOOL => translate_cell::<'a, bool>(row, index),
+            &PgType::BYTEA => translate_cell::<'a, Vec<u8>>(row, index),
+            &PgType::TEXT
+            | &PgType::NAME
+            | &PgType::VARCHAR
+            | &PgType::BPCHAR
+            | &PgType::UNKNOWN => translate_cell::<'a, String>(row, index),
+            &PgType::JSON | &PgType::JSONB => translate_cell::<'a, serde_json::Value>(row, index),
+            &PgType::DATE => translate_cell::<'a, chrono::NaiveDate>(row, index),
+            &PgType::TIME => translate_cell::<'a, chrono::NaiveTime>(row, index),
+            // &PgType::TIMETZ ?
+            &PgType::TIMESTAMP => translate_cell::<'a, chrono::NaiveDateTime>(row, index),
+            &PgType::TIMESTAMPTZ => translate_cell::<'a, chrono::DateTime<chrono::Utc>>(row, index),
+            &PgType::UUID => translate_cell::<'a, uuid::Uuid>(row, index),
+            &PgType::BIT | &PgType::VARBIT => match row.try_get::<usize, bit_vec::BitVec>(index) {
+                Ok(bits) => Ok(Box::new(bits.to_bytes())),
+                Err(e) => Err(e),
+            },
+            _ => unimplemented!(),
+        }
+    }
+}
+
+fn translate_col<'a, 'b>(
+    row: &'a PgRow,
+    index: usize,
+    col: &'a PgColumn,
+    info: &'b ColInfo,
+) -> Box<dyn ToSqlite> {
+    match try_translating_col(row, index, col, info.nullable) {
+        Ok(result) => result,
+        Err(e) => {
+            panic!("error {} in {:?} ({})", e, row, info)
+        }
+    }
+}
+
+pub fn translate_row(row: &PgRow, cols: &Vec<&ColInfo>) -> Vec<Box<dyn ToSqlite>> {
     return row
         .columns()
         .iter()
+        .zip(cols)
         .enumerate()
-        .map(|(idx, col)| translate_col(row, idx, col))
+        .map(|(idx, (col, colinfo))| translate_col(row, idx, col, colinfo))
         .collect();
 }
