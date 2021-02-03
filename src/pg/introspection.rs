@@ -3,7 +3,7 @@ use super::{
 };
 use crate::pg::object_types::{get_pg_type_from_name, pretty_relkind};
 use crate::pg::query;
-use std::{collections::HashMap, println};
+use std::collections::HashMap;
 
 pub fn get_table_defns(
     conn: &mut postgres::Client,

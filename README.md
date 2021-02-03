@@ -2,6 +2,8 @@
 
 Load data from postgres to sqlite3 as fast as possible.
 
+Inspired by [`db-to-sqlite`][2] and [datasette][1].
+
 ## Usage
 
 Before using `pg-to-sqlite3`, test that your DDL is compatible with sqlite3:
@@ -31,16 +33,9 @@ check_schema_compatible() {
 
 check_compatible;
 ```
-- (schemas: sqlite has `ATTACH`ed dbs, but attachments don't persist between connections)
-- (roles)
-- (users)
-- [ extensions: need careful translation ]
-- tables -> columns -> tables
-- (partitions: see schemas)
-- views
-- constraints
 
-Inspired by [`db-to-sqlite`][2] and [datasette][1].
+Note that sqlite won't be able to parse many postgres functions and some syntax, such as `now()` and `1::BIT`.
+As a consequence, views and check constraints are less likely to translate.
 
 [1]: https://datasette.io/
 [2]: https://github.com/simonw/db-to-sqlite
