@@ -1,8 +1,8 @@
 SELECT DISTINCT
-  source_rel.oid        AS source_oid,
-  source_rel.relname    AS source_table,
-  dependent_rel.relname AS dependent_rel,
-  dependent_rel.oid     AS dependent_oid
+  source_rel.oid        AS source_oid
+  , source_rel.relname    AS source_table
+  , dependent_rel.relname AS dependent_rel
+  , dependent_rel.oid     AS dependent_oid
 FROM pg_catalog.pg_depend AS dep
 JOIN pg_catalog.pg_rewrite AS rewrite ON dep.objid = rewrite.oid
 JOIN pg_catalog.pg_class AS dependent_rel ON rewrite.ev_class = dependent_rel.oid
