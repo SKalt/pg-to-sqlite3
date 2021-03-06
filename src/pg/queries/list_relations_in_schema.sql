@@ -10,4 +10,3 @@ WHERE c.relkind IN ('r','v','m','s','p')
     AND n.nspname = $1
     AND pg_catalog.pg_table_is_visible(c.oid)
 ORDER BY 1, 2;
-        

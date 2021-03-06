@@ -3,7 +3,6 @@
 // might include multiple, parallel edges like "table A columng alpha depnds on
 // (references) table B column beta; table A column x depends on table B column y"
 
-use fmt::Formatter;
 use petgraph::graph::Graph;
 use petgraph::{self, algo::toposort};
 use postgres::{self, RowIter, Transaction};
@@ -401,7 +400,7 @@ impl fmt::Display for FkeyConstraint {
             "CONSTRAINT {} FOREIGN KEY ({}) REFERENCES {}({})",
             self.name,
             self.columns.join(", "),
-            self.table,
+            self.foreign_table,
             self.foreign_columns.join(", ")
         )
     }
@@ -456,7 +455,7 @@ pub fn dump_table<'a, 'b>(
 }
 
 use postgres::Error as PgError;
-use rusqlite::{Connection, Error as SqliteErr, Transaction as SqliteTransaction};
+use rusqlite::{Error as SqliteErr, Transaction as SqliteTransaction};
 
 #[derive(Debug)]
 pub enum SqlError {
